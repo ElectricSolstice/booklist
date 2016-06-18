@@ -1,4 +1,4 @@
-*.sql
+*.sqlite
 *.hi
 *.o
 bin/
