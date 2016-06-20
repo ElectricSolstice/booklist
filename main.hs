@@ -62,9 +62,9 @@ addEntry box fieldName = do
     boxPackStart box hbox PackNatural 0
     return (fieldName, entry)
 
-removeBook connection bookID = do
+removeBook connection bookKey = do
     del <- prepare connection "DELETE FROM Books WHERE BookID=?"
-    execute del (map toSql [bookID])
+    execute del (map toSql [bookKey])
     commit connection
 
 delBook model view connection = do
