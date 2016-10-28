@@ -1,5 +1,7 @@
 module Main (Main.main) where
 import Control.Monad (sequence_)
+import qualified Data.ByteString.Char8 (concat)
+import qualified Data.Text as Text (pack,unpack,split,strip) 
 import Data.Maybe (fromJust)
 import Data.List (elemIndex)
 import Database.HDBC
@@ -7,7 +9,9 @@ import Database.HDBC.Sqlite3
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.General.Enums
 
-fields = ["BookID","Title", "Description"]
+extractByteString (SqlByteString bs) = bs
+
+fields = ["BookID","Title", "Author", "Description"]
 textFields = drop 1 fields
 
 modelFields = 
@@ -34,6 +38,18 @@ populateModel model connection = do
     create <- prepare connection ("CREATE TABLE IF NOT EXISTS Books (BookID " 
         ++ "INTEGER PRIMARY KEY, " ++ modelFields ++ ")")
     execute create []
+    getSchema <- prepare connection ("SELECT sql FROM sqlite_master WHERE type='table' AND name='Books';")
+    execute getSchema []
+    cols <- fetchRow getSchema
+    sqlString <- return (map extractByteString (fromJust cols))
+    str <- return (Data.ByteString.Char8.concat sqlString)
+    tableVars <- return (takeWhile (/= ')') (drop 1 (dropWhile (/= '(') (show str))))
+    tableCols <- return (map (Text.split (== ' ')) (map Text.strip (Text.split (== ',') (Text.pack(tableVars)))))
+    columns <- return (map (\a -> a !! 0) (map (map Text.unpack) tableCols))
+    missingColumns <- return (filter (\elem -> notElem elem columns) fields)
+    alterStatements <- return $ map (\m -> "ALTER TABLE Books ADD COLUMN " ++ m ++ " DEFAULT ''") missingColumns
+    alters <- (mapM (prepare connection) alterStatements)
+    mapM_ (\alt -> execute alt [])  alters
     commit connection
 
 updateModel model connection = do
