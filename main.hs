@@ -24,6 +24,11 @@ getField connection tableName field = do
    tableCols <- getTableCols connection tableName
    return (elemIndex field tableCols)
 
+getFields :: IConnection connection => connection -> String -> IO [Int]
+getFields connection tableName =
+    (mapM (getField connection tableName) textFields) >>= (\f -> return (map fromJust f))
+
+
 createRowFilter :: Int -> ([SqlValue] -> [AttrOp CellRendererText])
 createRowFilter index = (\row -> [cellText := (show (extractByteString (row !! index)))])
 
@@ -164,7 +169,10 @@ editBookPopup model view connection = do
     selection <- treeViewGetSelection view
     selected <- treeSelectionGetSelected selection
     book <- listStoreGetValue model (listStoreIterToIndex (fromJust selected))
-    entryFields <- mapM (addEntry vbox "") textFields
+    fieldIndexes <- getFields connection "Books"
+    entryFields <-  sequence (zipWith (\ entryWithVal fieldName -> entryWithVal fieldName) 
+        (map (\ index -> addEntry vbox (fromSql (book !! index))) fieldIndexes)
+        textFields)
     button <- buttonNewWithLabel "Update Book"
     on button buttonActivated (editBook model view connection entryFields >> 
         widgetDestroy popup)
