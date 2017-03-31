@@ -12,7 +12,7 @@ import Graphics.UI.Gtk.General.Enums
 
 extractByteString (SqlByteString bs) = bs
 
-fields = ["BookID","Title", "Author", "Description"]
+fields = ["BookID","Title", "Edition", "Author"]
 textFields = drop 1 fields
 
 modelFields = 
@@ -50,7 +50,6 @@ getTableCols connection tableName = do
 
 getMissingColumns connection tableName = do
     columns <- getTableCols connection tableName
-    -- columns <- return (map (\a -> a !! 0) (map (map Text.unpack) tableCols))
     return (filter (\elem -> notElem elem columns) fields)
 
 populateModel model connection = do
@@ -93,21 +92,36 @@ addBook model connection entries = do
     updateModel model connection
     return ()
 
-addEntry :: BoxClass box => box -> String -> IO (String, Entry)
-addEntry box fieldName = do
+addEntry :: BoxClass box => box -> String -> String -> IO (String, Entry)
+addEntry box entryText fieldName = do
     hbox <- hBoxNew False 0
     label <- labelNew (Just fieldName)
     boxPackStart hbox label PackNatural 0
     entry <- entryNew
+    entrySetText entry entryText
     boxPackStart hbox entry PackNatural 0
     boxPackStart box hbox PackNatural 0
     return (fieldName, entry)
+
+addBookPopup model connection = do
+    popup <- windowNew
+    vbox <- vBoxNew False 0
+    entryFields <- mapM (addEntry vbox "") textFields
+    button <- buttonNewWithLabel "Add Book"
+    on button buttonActivated (addBook model connection entryFields)
+    boxPackStart vbox button PackNatural 0
+    button <- buttonNewWithLabel "Cancel"
+    on button buttonActivated (widgetDestroy popup)
+    boxPackStart vbox button PackNatural 0
+    containerAdd popup vbox
+    widgetShowAll popup 
 
 removeBook :: IConnection conn => conn -> SqlValue -> IO ()
 removeBook connection bookKey = do
     del <- prepare connection "DELETE FROM Books WHERE BookID=?"
     execute del (map toSql [bookKey])
     commit connection
+
 
 delBook model view connection = do
     selection <- treeViewGetSelection view
@@ -117,17 +131,47 @@ delBook model view connection = do
     updateModel model connection
     return ()
 
-addBookPopup model connection = do
+updateBook :: IConnection conn => ListStore [SqlValue] -> conn -> SqlValue -> [(SqlValue,SqlValue)] -> IO ()
+updateBook model connection bookID newValues = do
+    -- column field must be known at time of prepare, so col placed into string
+    updates <- return (map (\ (col, value) -> 
+        (prepare connection ("UPDATE Books SET "++(fromSql col)++"=? WHERE BookID=?")) >>=
+        (\ u -> execute u [value,bookID])) newValues)
+    sequence_ updates
+    commit connection
+    updateModel model connection
+    return ()
+
+-- specifies return type of entryGetText as IO String
+-- so compiler can deduce type
+getText :: (a, Entry) -> IO String
+getText entry  = entryGetText (snd entry)
+
+editBook model view connection entries = do
+    selection <- treeViewGetSelection view
+    selected <- treeSelectionGetSelected selection
+    book <- listStoreGetValue model (listStoreIterToIndex (fromJust selected))
+    bookID <- return (head book)
+    updateVals <- ((mapM getText entries) >>= (\x -> return (map toSql x)))
+    updateBook model connection bookID  (zip (map toSql textFields) updateVals)
+    return ()
+
+editBookPopup :: (TreeViewClass view, IConnection conn) =>
+    ListStore [SqlValue] -> view -> conn -> IO ()
+editBookPopup model view connection = do
     popup <- windowNew
     vbox <- vBoxNew False 0
-    entryFields <- mapM (addEntry vbox) textFields
-    button <- buttonNewWithLabel "Add Book"
-    on button buttonActivated (addBook model connection entryFields)
+    selection <- treeViewGetSelection view
+    selected <- treeSelectionGetSelected selection
+    book <- listStoreGetValue model (listStoreIterToIndex (fromJust selected))
+    entryFields <- mapM (addEntry vbox "") textFields
+    button <- buttonNewWithLabel "Update Book"
+    on button buttonActivated (editBook model view connection entryFields >> 
+        widgetDestroy popup)
     boxPackStart vbox button PackNatural 0
     button <- buttonNewWithLabel "Cancel"
     on button buttonActivated (widgetDestroy popup)
     boxPackStart vbox button PackNatural 0
-
     containerAdd popup vbox
     widgetShowAll popup
 
@@ -150,7 +194,6 @@ main = do
 
     columns <- return (map 
         (addColumn view renderer model) textFields)
-    --fieldIndexes <- map (\ t -> fromJust (getField connection model t)) textFields
     fieldIndexes <- sequence (map (getField connection "Books") textFields)
     filters <- return (map createRowFilter (map fromJust fieldIndexes))
     sequence_ (zipWith (\ c f -> c f) (columns) (filters))
@@ -159,11 +202,14 @@ main = do
     containerAdd vbox bookList
 
     buttonRow <- hBoxNew False 0
-    button <- buttonNewWithLabel "Add Book"
+    button <- buttonNewWithLabel "Add"
     on button buttonActivated (addBookPopup model connection)
     boxPackStart buttonRow button PackNatural 0
-    button <- buttonNewWithLabel "Delete Book"
+    button <- buttonNewWithLabel "Delete"
     on button buttonActivated (delBook model view connection)
+    boxPackStart buttonRow button PackNatural 0
+    button <- buttonNewWithLabel "Edit"
+    on button buttonActivated (editBookPopup model view connection)
     boxPackStart buttonRow button PackNatural 0
     boxPackStart vbox buttonRow PackNatural 0
 
